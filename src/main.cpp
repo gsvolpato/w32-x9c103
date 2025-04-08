@@ -1,4 +1,7 @@
 #include <Arduino.h>
+#include <SPIFFS.h>
+#include <ArduinoJson.h>
+
 
 #define INC_PIN 22
 #define UD_PIN  21
@@ -11,11 +14,15 @@
 // Constants
 #define DEBOUNCE_TIME 50  // Debounce time in milliseconds
 #define POT_MAX_STEPS 99  // X9C103 has 100 wiper positions (0-99)
+#define POSITION_FILE "/pot_position.json"
 
 // Function prototypes
 void resetToZero();
 void setPosition(int position);
 void storePosition();
+void savePositionToSPIFFS();
+bool loadPositionFromSPIFFS();
+void initSPIFFS();
 
 // Variables
 int currentPosition = 50;  // Start in the middle position
@@ -44,10 +51,13 @@ void setup() {
   
   Serial.println("Initializing digital potentiometer...");
   
+  // Initialize SPIFFS and load saved position
+  initSPIFFS();
+  
   // Reset to zero position first
   resetToZero();
   
-  // Set to initial position (middle)
+  // Set to initial position
   setPosition(currentPosition);
   
   Serial.println("Setup complete!");
@@ -98,13 +108,30 @@ void loop() {
   if (storeState != lastStoreState && currentTime - lastDebounceTime > DEBOUNCE_TIME) {
     if (storeState == LOW) {  // Button pressed (LOW due to pull-up)
       storePosition();
-      Serial.println("Current position stored to non-volatile memory");
+      savePositionToSPIFFS();
+      Serial.println("Current position stored to non-volatile memory and SPIFFS");
     }
     lastDebounceTime = currentTime;
   }
   lastStoreState = storeState;
   
   delay(10);  // Small delay to prevent CPU hogging
+}
+
+// Initialize SPIFFS file system
+void initSPIFFS() {
+  if (!SPIFFS.begin(true)) {
+    Serial.println("An error occurred while mounting SPIFFS");
+    return;
+  }
+  
+  Serial.println("SPIFFS mounted successfully");
+  
+  if (loadPositionFromSPIFFS()) {
+    Serial.println("Position loaded from SPIFFS");
+  } else {
+    Serial.println("Using default position");
+  }
 }
 
 // Set the wiper to a specific position (0-99)
@@ -166,4 +193,53 @@ void storePosition() {
   
   // Disable the chip
   digitalWrite(CS_PIN, HIGH);
+}
+
+// Save the current potentiometer position to SPIFFS
+void savePositionToSPIFFS() {
+  StaticJsonDocument<64> doc;
+  doc["position"] = currentPosition;
+  
+  File file = SPIFFS.open(POSITION_FILE, FILE_WRITE);
+  if (!file) {
+    Serial.println("Failed to open file for writing");
+    return;
+  }
+  
+  if (serializeJson(doc, file) == 0) {
+    Serial.println("Failed to write to file");
+  }
+  
+  file.close();
+  Serial.println("Position saved to SPIFFS");
+}
+
+// Load the potentiometer position from SPIFFS
+bool loadPositionFromSPIFFS() {
+  if (!SPIFFS.exists(POSITION_FILE)) {
+    Serial.println("Position file not found");
+    return false;
+  }
+  
+  File file = SPIFFS.open(POSITION_FILE, FILE_READ);
+  if (!file) {
+    Serial.println("Failed to open file for reading");
+    return false;
+  }
+  
+  StaticJsonDocument<64> doc;
+  DeserializationError error = deserializeJson(doc, file);
+  
+  file.close();
+  
+  if (error) {
+    Serial.print("deserializeJson() failed: ");
+    Serial.println(error.c_str());
+    return false;
+  }
+  
+  currentPosition = doc["position"];
+  Serial.print("Loaded position from SPIFFS: ");
+  Serial.println(currentPosition);
+  return true;
 } 
