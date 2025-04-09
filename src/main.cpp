@@ -12,9 +12,11 @@
 #define STORE_BTN 26
 
 // Constants
-#define DEBOUNCE_TIME 50  // Debounce time in milliseconds
-#define POT_MAX_STEPS 99  // X9C103 has 100 wiper positions (0-99)
+#define DEBOUNCE_TIME 50       // Debounce time in milliseconds
+#define POT_MAX_STEPS 99       // X9C103 has 100 wiper positions (0-99)
 #define POSITION_FILE "/pot_position.json"
+#define CONTINUOUS_DELAY 250   // Delay in ms before continuous mode activates
+#define CONTINUOUS_SPEED 100   // Time between steps in continuous mode in ms
 
 // Function prototypes
 void resetToZero();
@@ -27,6 +29,9 @@ void initSPIFFS();
 // Variables
 int currentPosition = 50;  // Start in the middle position
 unsigned long lastDebounceTime = 0;
+unsigned long buttonPressStart = 0; // When a button was first pressed
+unsigned long lastContinuousAction = 0; // Last time a continuous action was performed
+bool continuousModeActive = false; // If continuous mode is currently active
 int lastUpState = HIGH;
 int lastDownState = HIGH;
 int lastStoreState = HIGH;
@@ -69,12 +74,17 @@ void loop() {
   int downState = digitalRead(DOWN_BTN);
   int storeState = digitalRead(STORE_BTN);
   
-  // Check for button presses with debounce
   unsigned long currentTime = millis();
   
-  // Up button pressed
+  // Up button logic
   if (upState != lastUpState && currentTime - lastDebounceTime > DEBOUNCE_TIME) {
+    lastDebounceTime = currentTime;
     if (upState == LOW) {  // Button pressed (LOW due to pull-up)
+      // Button just pressed
+      buttonPressStart = currentTime;
+      continuousModeActive = false;
+      
+      // Immediately increase position
       if (currentPosition < POT_MAX_STEPS) {
         currentPosition++;
         setPosition(currentPosition);
@@ -84,13 +94,18 @@ void loop() {
         Serial.println("Already at maximum position");
       }
     }
-    lastDebounceTime = currentTime;
   }
   lastUpState = upState;
   
-  // Down button pressed
+  // Down button logic
   if (downState != lastDownState && currentTime - lastDebounceTime > DEBOUNCE_TIME) {
+    lastDebounceTime = currentTime;
     if (downState == LOW) {  // Button pressed (LOW due to pull-up)
+      // Button just pressed
+      buttonPressStart = currentTime;
+      continuousModeActive = false;
+      
+      // Immediately decrease position
       if (currentPosition > 0) {
         currentPosition--;
         setPosition(currentPosition);
@@ -100,9 +115,40 @@ void loop() {
         Serial.println("Already at minimum position");
       }
     }
-    lastDebounceTime = currentTime;
   }
   lastDownState = downState;
+  
+  // Continuous adjustment mode
+  if (upState == LOW && currentTime - buttonPressStart > CONTINUOUS_DELAY) {
+    // Up button held for CONTINUOUS_DELAY
+    continuousModeActive = true;
+    
+    if (currentTime - lastContinuousAction > CONTINUOUS_SPEED) {
+      lastContinuousAction = currentTime;
+      
+      if (currentPosition < POT_MAX_STEPS) {
+        currentPosition++;
+        setPosition(currentPosition);
+        Serial.print("Position increased to: ");
+        Serial.println(currentPosition);
+      }
+    }
+  } 
+  else if (downState == LOW && currentTime - buttonPressStart > CONTINUOUS_DELAY) {
+    // Down button held for CONTINUOUS_DELAY
+    continuousModeActive = true;
+    
+    if (currentTime - lastContinuousAction > CONTINUOUS_SPEED) {
+      lastContinuousAction = currentTime;
+      
+      if (currentPosition > 0) {
+        currentPosition--;
+        setPosition(currentPosition);
+        Serial.print("Position decreased to: ");
+        Serial.println(currentPosition);
+      }
+    }
+  }
   
   // Store button pressed
   if (storeState != lastStoreState && currentTime - lastDebounceTime > DEBOUNCE_TIME) {
